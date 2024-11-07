@@ -193,3 +193,11 @@ class Consistency_Model:
         s_in = x_T.new_ones([x_T.shape[0]]) # stands for sigma input
         x_0 = self.denoise(model, x_T, self.sigmas[0] * s_in, state)[1]
         return x_0
+    
+    def z_score(self, state, action, model):
+        state_rpt = th.repeat_interleave(state.unsqueeze(1), repeats=50, dim=1)
+        scaled_actions = self.batch_multi_sample(model=model, state=state_rpt)
+        cm_mean = scaled_actions.mean(dim=1)
+        z_scores = (-(action - cm_mean)**2/2).mean(dim=1).reshape(-1, 1)
+
+        return z_scores

@@ -123,16 +123,15 @@ class TD3(OffPolicyAlgorithm):
                 noise = replay_data.actions.clone().data.normal_(0, self.target_policy_noise)
                 noise = noise.clamp(-self.target_noise_clip, self.target_noise_clip) # here is the [-1, 1] action
                 next_actions = (self.consistency_model.sample(model=self.actor_target, state=replay_data.next_observations) + noise).clamp(-1, 1)
-
-                next_state_rpt = th.repeat_interleave(replay_data.next_observations.unsqueeze(1), repeats=50, dim=1)
-                scaled_next_action = self.consistency_model.batch_multi_sample(model=self.actor, state=next_state_rpt)
-                next_cm_mean = scaled_next_action.mean(dim=1)
-                next_z_scores = (-(next_actions - next_cm_mean)**2/2).mean(dim=1).reshape(-1, 1)
+                next_z_scores = self.consistency_model.z_score(state=replay_data.next_observations, 
+                                                               action=next_actions, 
+                                                               model=self.actor)
+                
                 # Compute the next Q-values: min over all critics targets
                 next_q_values = th.cat(self.critic_target(replay_data.next_observations, next_actions), dim=1)
                 next_q_values, _ = th.min(next_q_values, dim=1, keepdim=True)
                 # add entropy term
-                next_q_values = next_q_values - 0.1 * next_z_scores
+                next_q_values = next_q_values - 0.3 * next_z_scores
                 target_q_values = replay_data.rewards + (1 - replay_data.dones) * self.gamma * next_q_values
 
             # Get current Q-values estimates for each critic network
@@ -154,18 +153,17 @@ class TD3(OffPolicyAlgorithm):
                 sampled_action = self.consistency_model.sample(model=self.actor, state=replay_data.observations)
                 compute_bc_losses = functools.partial(self.consistency_model.consistency_losses,
                                               model=self.actor,
-                                              x_start=replay_data.actions,
+                                              x_start=sampled_action.detach(),
                                               num_scales=40,
                                               target_model=self.actor_target,
                                               state=replay_data.observations,
                                               )
                 bc_losses = compute_bc_losses() # but here take loss rather than consistency_loss
-
-                state_rpt = th.repeat_interleave(replay_data.observations.unsqueeze(1), repeats=50, dim=1)
-                scaled_action = self.consistency_model.batch_multi_sample(model=self.actor, state=state_rpt)
-                cm_mean = scaled_action.mean(dim=1)
-                z_scores = ((-(sampled_action - cm_mean)**2/2).mean(dim=1)).mean()
-                actor_loss = bc_losses["consistency_loss"].mean() - self.critic.q1_forward(replay_data.observations, sampled_action).mean() - 0.1 * z_scores
+                z_scores = self.consistency_model.z_score(state=replay_data.next_observations, 
+                                                          action=sampled_action, 
+                                                          model=self.actor)
+                # actor_loss = (bc_losses["consistency_loss"] - self.critic.q1_forward(replay_data.observations, sampled_action) - 0.3 * z_scores).mean()
+                actor_loss = (- self.critic.q1_forward(replay_data.observations, sampled_action) - 0.3 * z_scores).mean()
                 actor_losses.append(actor_loss.item())
 
                 # Optimize the actor
