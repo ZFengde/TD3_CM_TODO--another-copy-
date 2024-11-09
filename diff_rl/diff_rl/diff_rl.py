@@ -131,7 +131,7 @@ class TD3(OffPolicyAlgorithm):
                 next_q_values = th.cat(self.critic_target(replay_data.next_observations, next_actions), dim=1)
                 next_q_values, _ = th.min(next_q_values, dim=1, keepdim=True)
                 # add entropy term
-                next_q_values = next_q_values - 0.3 * next_z_scores
+                next_q_values = next_q_values - 0.1 * next_z_scores
                 target_q_values = replay_data.rewards + (1 - replay_data.dones) * self.gamma * next_q_values
 
             # Get current Q-values estimates for each critic network
@@ -145,7 +145,7 @@ class TD3(OffPolicyAlgorithm):
             # Optimize the critics
             self.critic.optimizer.zero_grad()
             critic_loss.backward()
-            th.nn.utils.clip_grad_norm_(self.critic.parameters(), 0.5)
+            # th.nn.utils.clip_grad_norm_(self.critic.parameters(), 0.5)
             self.critic.optimizer.step()
 
             # Delayed policy updates
@@ -153,7 +153,8 @@ class TD3(OffPolicyAlgorithm):
                 sampled_action = self.consistency_model.sample(model=self.actor, state=replay_data.observations)
                 compute_bc_losses = functools.partial(self.consistency_model.consistency_losses,
                                               model=self.actor,
-                                              x_start=sampled_action.detach(),
+                                            #   x_start=sampled_action.detach(),
+                                              x_start=replay_data.actions,
                                               num_scales=40,
                                               target_model=self.actor_target,
                                               state=replay_data.observations,
@@ -162,8 +163,7 @@ class TD3(OffPolicyAlgorithm):
                 z_scores = self.consistency_model.z_score(state=replay_data.next_observations, 
                                                           action=sampled_action, 
                                                           model=self.actor)
-                # actor_loss = (bc_losses["consistency_loss"] - self.critic.q1_forward(replay_data.observations, sampled_action) - 0.3 * z_scores).mean()
-                actor_loss = (- self.critic.q1_forward(replay_data.observations, sampled_action) - 0.3 * z_scores).mean()
+                actor_loss = (bc_losses["consistency_loss"] - self.critic.q1_forward(replay_data.observations, sampled_action) - 0.1 * z_scores).mean()
                 actor_losses.append(actor_loss.item())
 
                 # Optimize the actor
